@@ -27,6 +27,10 @@
 
 从此目录运行`python nda_service.py`即可开始文件下载。
 
+```bash
+nohup python nda_service.py > nda_service.log 2>&1 &
+```
+
 ## License
 
 此项目使用MIT许可证。

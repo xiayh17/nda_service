@@ -5,6 +5,7 @@ from pathlib import Path
 import os
 import requests
 import subprocess
+import time
 from dotenv import load_dotenv
 
 class NDAService:
@@ -54,13 +55,40 @@ class NDAService:
             self.files[url['package_file_id']]['download'] = url['downloadURL']
 
     def download_files(self):
-        for id, data in self.files.items():
-            name = data['name']
-            download_url = data['download']
-            file_path = Path(self.download_directory) / name
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            command = ['aria2c', '--file-allocation=none', download_url, '-d', str(file_path.parent), '-l', 'download.log:info'] + self.aria2c_options
-            subprocess.run(command, check=True)
+        all_files_downloaded = True
+        with open('download.log', 'a') as log_file:
+            for id, data in self.files.items():
+                name = data['name']
+                download_url = data['download']
+                file_path = Path(self.download_directory) / name
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                command = ['aria2c', '--file-allocation=none', download_url, '-d', str(file_path.parent), '-l', 'aria2c.log', '-j', '1'] + self.aria2c_options
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode != 0:
+                    log_file.write(f'Failed to download file {name} from URL {download_url}\n')
+                    all_files_downloaded = False
+                else:
+                    with open('aria2c.log', 'r') as aria2c_log:
+                        download_speed = 'Unknown'
+                        for line in aria2c_log:
+                            if 'Download Results:' in line:
+                                break
+                            if 'Download Speed:' in line:
+                                download_speed = line.split(':')[-1].strip()
+                        log_file.write(f'Successfully downloaded file {name} from URL {download_url} with speed {download_speed}\n')
+                os.remove('aria2c.log')
+        return all_files_downloaded
+
+    def refresh_and_download(self):
+        while True:
+            self.authenticate()
+            s3_files = self.get_s3_files(self.manifest_file)
+            self.get_files(s3_files)
+            self.get_presigned_urls()
+            all_files_downloaded = self.download_files()
+            if all_files_downloaded:
+                break
+            time.sleep(7200)  # wait for 2 hours
 
 
 if __name__ == "__main__":
@@ -72,8 +100,4 @@ if __name__ == "__main__":
     aria2c_options = config.get('DEFAULT', 'Aria2cOptions')
 
     service = NDAService(manifest_file, package_id, download_directory, aria2c_options)
-    service.authenticate()
-    s3_files = service.get_s3_files(service.manifest_file)
-    service.get_files(s3_files)
-    service.get_presigned_urls()
-    service.download_files()
+    service.refresh_and_download()
